@@ -1,1 +1,81 @@
 version: "3.8"
+
+services:
+  traefik:
+    image: traefik:v2.11
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.network=cyberguard"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--certificatesresolvers.le.acme.email=${ADMIN_EMAIL}"
+      - "--certificatesresolvers.le.acme.storage=/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-acme:/acme.json"
+    networks:
+      - cyberguard
+
+  vaultwarden:
+    image: vaultwarden/server:latest
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - SIGNUPS_ALLOWED=false
+      - ADMIN_TOKEN=${VW_ADMIN_TOKEN}
+      - DATABASE_URL=postgres://vaultwarden:${POSTGRES_PASSWORD}@db:5432/vaultwarden
+    depends_on:
+      - db
+    volumes:
+      - vaultwarden-data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vw.rule=Host(`${DOMAIN}`) && PathPrefix(`/vault`)"
+      - "traefik.http.services.vw.loadbalancer.server.port=80"
+    networks:
+      - cyberguard
+
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=vaultwarden
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=vaultwarden
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - cyberguard
+
+  passkeys:
+    image: hankolabs/passkeys-server:latest
+    environment:
+      - SERVER_HOST=0.0.0.0
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.passkeys.rule=Host(`${DOMAIN}`) && PathPrefix(`/passkeys`)"
+      - "traefik.http.services.passkeys.loadbalancer.server.port=8000"
+    networks:
+      - cyberguard
+
+  emailguardian:
+    image: ghcr.io/thephishproject/thephish:latest
+    environment:
+      - TP_LOG_LEVEL=info
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tp.rule=Host(`${DOMAIN}`) && PathPrefix(`/guardian`)"
+      - "traefik.http.services.tp.loadbalancer.server.port=8080"
+    networks:
+      - cyberguard
+
+networks:
+  cyberguard:
+    driver: bridge
+
+volumes:
+  vaultwarden-data:
+  pgdata:
+  traefik-acme:
